@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<title>蔵書BL Pro 検索強化版</title>
+<title>蔵書BL Pro 画像補完版</title>
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover">
@@ -124,8 +124,18 @@ function showToast(msg) {
 function formatBookData(item) {
   const info = item.volumeInfo;
   let img = info.imageLinks?.thumbnail || info.imageLinks?.smallThumbnail || "";
+  // 画像がない場合、より小さな画像があればそれを使う
+  if(!img && info.imageLinks) {
+    img = info.imageLinks.small || info.imageLinks.medium || "";
+  }
   img = img.replace("http://", "https://");
-  return { title: info.title || "無題", author: cleanSpace((info.authors && info.authors.length > 0) ? info.authors[0] : "作者不明"), image: img, date: info.publishedDate || "不明" };
+  return { 
+    title: info.title || "無題", 
+    author: cleanSpace((info.authors && info.authors.length > 0) ? info.authors[0] : "作者不明"), 
+    image: img, 
+    date: info.publishedDate || "不明",
+    id: item.id // API固有のID
+  };
 }
 
 async function quickAdd(b, btn) {
@@ -142,7 +152,7 @@ async function openDetail(sn, auth) {
   document.getElementById("detailPage").style.display = "block";
   document.getElementById("detailTitle").innerText = sn;
   document.getElementById("detailAuthor").innerText = auth;
-  document.getElementById("retryQ").value = sn; // 再試行用にセット
+  document.getElementById("retryQ").value = sn;
 
   const books = await getAllBooks();
   const items = books.filter(b => getSeries(b.title) === sn && cleanSpace(b.author) === cleanSpace(auth)).sort((a,b) => collator.compare(a.title, b.title));
@@ -155,16 +165,21 @@ async function loadSeriesList(q, auth) {
   const container = document.getElementById("seriesCheckList");
   container.innerHTML = "全巻を確認中...";
   try {
-    const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=intitle:${encodeURIComponent(q)}&inauthor:${encodeURIComponent(auth)}&maxResults=40&orderBy=newest`);
+    // 検索精度を上げるために intitle と inauthor を併用
+    const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=intitle:${encodeURIComponent(q)}+inauthor:${encodeURIComponent(auth)}&maxResults=40&orderBy=newest`);
     const data = await res.json();
     const books = await getAllBooks();
     if(data.items) {
+      // タイトルで重複排除
       const uniqueApi = Array.from(new Set(data.items.map(x => cleanSpace(x.volumeInfo.title)))).map(t => data.items.find(x => cleanSpace(x.volumeInfo.title) === t));
       uniqueApi.sort((a,b) => collator.compare(a.volumeInfo.title, b.volumeInfo.title));
+      
       container.innerHTML = uniqueApi.map(x => {
         const b = formatBookData(x);
         const owned = books.some(ob => cleanSpace(ob.title) === cleanSpace(b.title));
-        return `<div class="list-item"><img src="${b.image}"><div class="list-info"><span class="list-title">${b.title}</span></div>
+        // 画像がない場合、グレーのプレースホルダーを表示
+        const imgTag = b.image ? `<img src="${b.image}">` : `<div style="width:45px;height:63px;background:#ddd;display:flex;align-items:center;justify-content:center;font-size:8px;color:#999;border-radius:4px;flex-shrink:0;">No Image</div>`;
+        return `<div class="list-item">${imgTag}<div class="list-info"><span class="list-title">${b.title}</span></div>
         <button class="add-btn" style="background:${owned?'#ccc':'var(--main)'};color:white;border:none;padding:8px;border-radius:5px;font-size:10px;" onclick='quickAdd(${JSON.stringify(b).replace(/'/g, "&apos;")}, this)'>${owned?'済':'追加'}</button></div>`;
       }).join("");
     } else { container.innerHTML = "見つかりませんでした。再検索をお試しください。"; }
