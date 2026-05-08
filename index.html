@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<title>蔵書BL Pro スキャン通知版</title>
+<title>蔵書BL Pro 安定版</title>
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover">
@@ -32,17 +32,14 @@
   #modal { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6); z-index:1000; align-items:center; justify-content:center; }
   .modal-content { background:#fff; padding:20px; border-radius:15px; width:90%; max-width:400px; max-height: 85vh; overflow-y: auto; }
   
-  /* スキャン成功通知ポップアップ */
-  #scanPopup { display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); background:rgba(255,255,255,0.95); padding:20px; border-radius:20px; box-shadow:0 10px 30px rgba(0,0,0,0.3); z-index:3000; text-align:center; width:200px; animation: fadeIn 0.3s; }
-  #scanPopup img { width:100px; height:140px; object-fit:cover; border-radius:8px; margin-bottom:10px; box-shadow:0 4px 8px rgba(0,0,0,0.1); }
-  #scanPopup .pop-title { font-size:12px; font-weight:bold; color:var(--text-main); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  #scanPopup .pop-msg { font-size:10px; color: #4caf50; font-weight:bold; margin-top:5px; }
-  @keyframes fadeIn { from {opacity:0; transform:translate(-50%, -40%);} to {opacity:1; transform:translate(-50%, -50%);} }
+  #scanPopup { display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); background:rgba(255,255,255,0.98); padding:20px; border-radius:20px; box-shadow:0 15px 40px rgba(0,0,0,0.4); z-index:3000; text-align:center; width:220px; animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+  #scanPopup img { width:110px; height:155px; object-fit:cover; border-radius:8px; margin-bottom:10px; box-shadow:0 4px 10px rgba(0,0,0,0.2); }
+  @keyframes popIn { from {opacity:0; transform:translate(-50%, -30%) scale(0.8);} to {opacity:1; transform:translate(-50%, -50%) scale(1);} }
 
   .img-preview { width: 80px; height: 110px; object-fit: cover; border-radius: 4px; display: block; margin: 0 auto 10px; border: 1px solid #ddd; background: #f9f9f9; }
   .flat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(95px, 1fr)); gap: 10px; }
   .book-card { position: relative; background: #333; border-radius: 6px; overflow: hidden; aspect-ratio: 3/4.2; }
-  .card-title { position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.6); color: white; padding: 4px 2px; font-size: 9px; text-align: center; }
+  .card-title { position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.7); color: white; padding: 4px 2px; font-size: 9px; text-align: center; line-height: 1.2; }
   .badge { position: absolute; top: 4px; right: 4px; background: #f44336; color: white; font-size: 9px; border-radius: 10px; padding: 1px 5px; }
   .horizontal-scroll { display: flex; overflow-x: auto; gap: 8px; padding: 5px 0 15px; }
   .toast { position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.8); color: white; padding: 10px 20px; border-radius: 25px; font-size: 13px; z-index: 2000; display: none; }
@@ -73,7 +70,7 @@
       <button class="tool-btn" onclick="openManualAdd()">✍️ 手動登録</button>
     </div>
     <div style="display:flex; gap:5px;">
-      <input id="q" type="search" placeholder="タイトルやISBNで検索..." onkeypress="if(event.key==='Enter') searchAPI()">
+      <input id="q" type="search" placeholder="タイトル、ISBN、作者名..." onkeypress="if(event.key==='Enter') searchAPI()">
       <button onclick="searchAPI()" style="width:70px; height:43px; background:var(--accent); color:white; border:none; border-radius:8px; flex-shrink:0;">検索</button>
     </div>
     <div id="searchResult"></div>
@@ -86,8 +83,8 @@
 
 <div id="scanPopup" onclick="this.style.display='none'">
   <img id="popImg" src="">
-  <div class="pop-title" id="popTitle"></div>
-  <div class="pop-msg">✓ 登録完了</div>
+  <div id="popTitle" style="font-size:12px;font-weight:bold;margin-bottom:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>
+  <div style="font-size:11px;color:#4caf50;font-weight:bold;">✓ 登録しました</div>
 </div>
 
 <div id="detailPage" class="sub-page">
@@ -106,7 +103,8 @@
 
 <script>
 let db, sortKey = 'author', sortOrder = 1, viewMode = 'grid', isScanning = false, lastScan = "", currentImgData = "";
-const collator = new Intl.Collator('ja', { numeric: true, sensitivity: 'base' });
+// 日本語ソートの設定強化
+const collator = new Intl.Collator('ja', { numeric: true, sensitivity: 'base', usage: 'sort' });
 
 const request = indexedDB.open("BookShelfDB", 1);
 request.onupgradeneeded = (e) => { e.target.result.createObjectStore("books", {keyPath: "id"}); };
@@ -132,13 +130,21 @@ function formatBookData(item) {
   const info = item.volumeInfo;
   let img = info.imageLinks?.thumbnail || info.imageLinks?.smallThumbnail || "";
   img = img.replace("http://", "https://");
-  return { title: info.title || "無題", author: cleanSpace((info.authors && info.authors.length > 0) ? info.authors[0] : "作者不明"), image: img, date: info.publishedDate || "不明" };
+  return { 
+    title: info.title || "無題", 
+    author: cleanSpace((info.authors && info.authors.length > 0) ? info.authors[0] : "作者不明"), 
+    image: img, 
+    date: info.publishedDate || "不明"
+  };
 }
 
-async function quickAdd(b, isScan = false) {
+// 追加ボタンの更新
+async function quickAdd(b, btn, isScan = false) {
   const books = await getAllBooks();
   if (books.some(x => cleanSpace(x.title) === cleanSpace(b.title))) { 
-    showToast("登録済です"); return; 
+    showToast("登録済です"); 
+    if(btn) { btn.innerHTML = "済"; btn.style.background = "#ccc"; }
+    return; 
   }
   b.id = "id" + Date.now() + Math.random();
   b.regDate = Date.now();
@@ -150,8 +156,9 @@ async function quickAdd(b, isScan = false) {
   tx.oncomplete = () => { 
     refreshCount(); 
     renderShelf(); 
+    if(btn) { btn.innerHTML = "済"; btn.style.background = "#ccc"; }
     if(isScan) showScanPopup(b);
-    else showToast("登録しました"); 
+    else showToast("登録完了"); 
   };
 }
 
@@ -160,7 +167,7 @@ function showScanPopup(b) {
   document.getElementById("popImg").src = b.image || "";
   document.getElementById("popTitle").innerText = b.title;
   pop.style.display = "block";
-  setTimeout(() => { pop.style.display = "none"; }, 2500);
+  setTimeout(() => { pop.style.display = "none"; }, 2000);
 }
 
 function toggleScanner() {
@@ -174,7 +181,7 @@ function toggleScanner() {
       const response = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${code}`);
       const data = await response.json(); 
       if(data.items) {
-        await quickAdd(formatBookData(data.items[0]), true);
+        await quickAdd(formatBookData(data.items[0]), null, true);
       }
       setTimeout(() => { lastScan = ""; }, 2500);
     }
@@ -203,10 +210,10 @@ function openManualAdd() {
       <input type="file" accept="image/*" style="display:none;" onchange="handleImgSelect(this)">
     </label>
     <input id="mt" placeholder="作品タイトル">
-    <input id="mkTitle" placeholder="作品の読み（カナ）">
+    <input id="mkTitle" placeholder="タイトルの読み（カナ）">
     <input id="ma" placeholder="作者名">
-    <input id="mkAuthor" placeholder="作者の読み（カナ）">
-    <button onclick="manualSave()" class="tool-btn" style="width:100%">登録する</button>
+    <input id="mkAuthor" placeholder="作者名の読み（カナ）">
+    <button onclick="manualSave()" class="tool-btn" style="width:100%">登録</button>
     <button onclick="closeModal()" style="width:100%;margin-top:10px;border:none;background:none;">閉じる</button>`;
   document.getElementById("modal").style.display = "flex";
 }
@@ -236,17 +243,17 @@ async function openEditModal(id) {
     </label>
     <div style="font-size:11px;color:var(--accent);">作品名</div>
     <input id="et" value="${b.title}">
-    <div style="font-size:11px;color:var(--accent);">読み（並び替え）</div>
+    <div style="font-size:11px;color:var(--accent);">読みカナ（並び替え）</div>
     <input id="ekTitle" value="${b.kanaTitle || ''}">
     <div style="font-size:11px;color:var(--accent);">作者名</div>
     <input id="ea" value="${b.author}">
-    <div style="font-size:11px;color:var(--accent);">作者読み</div>
+    <div style="font-size:11px;color:var(--accent);">作者の読みカナ</div>
     <input id="ekAuthor" value="${b.kanaAuthor || ''}">
     <div style="display:flex;gap:10px;">
       <button onclick="deleteBook('${id}')" style="flex:1;background:#e57373;color:white;border:none;padding:12px;border-radius:5px;">削除</button>
       <button onclick="updateBook('${id}')" style="flex:1;background:var(--main);color:white;border:none;padding:12px;border-radius:5px;">保存</button>
     </div>
-    <button onclick="closeModal()" style="width:100%;margin-top:15px;border:none;background:none;">キャンセル</button>`;
+    <button onclick="closeModal()" style="width:100%;margin-top:15px;border:none;background:none;">閉じる</button>`;
   document.getElementById("modal").style.display = "flex";
 }
 
@@ -254,13 +261,13 @@ async function updateBook(id) {
   const all = await getAllBooks();
   const b = all.find(x => x.id === id);
   b.title = document.getElementById("et").value;
-  b.kanaTitle = document.getElementById("ekTitle").value;
+  b.kanaTitle = document.getElementById("ekTitle").value || b.title;
   b.author = cleanSpace(document.getElementById("ea").value);
-  b.kanaAuthor = document.getElementById("ekAuthor").value;
+  b.kanaAuthor = document.getElementById("ekAuthor").value || b.author;
   b.image = currentImgData;
   const tx = db.transaction("books", "readwrite");
   tx.objectStore("books").put(b);
-  tx.oncomplete = () => { closeModal(); renderShelf(); showToast("更新完了"); };
+  tx.oncomplete = () => { closeModal(); renderShelf(); showToast("保存しました"); };
 }
 
 async function searchAPI() {
@@ -273,7 +280,7 @@ async function searchAPI() {
     const b = formatBookData(x);
     const owned = books.some(ob => cleanSpace(ob.title) === cleanSpace(b.title));
     return `<div class="list-item"><img src="${b.image}"><div class="list-info"><span class="list-title">${b.title}</span><span class="list-author-sub">${b.author}</span></div>
-    <button class="add-btn" style="background:${owned?'#ccc':'var(--main)'};color:white;border:none;padding:8px;border-radius:5px;" onclick='quickAdd(${JSON.stringify(b).replace(/'/g, "&apos;")})'>${owned?'済':'追加'}</button></div>`;
+    <button class="add-btn" style="background:${owned?'#ccc':'var(--main)'};color:white;border:none;padding:8px 12px;border-radius:5px;" onclick='quickAdd(${JSON.stringify(b).replace(/'/g, "&apos;")}, this)'>${owned?'済':'追加'}</button></div>`;
   }).join("");
 }
 
@@ -330,7 +337,7 @@ async function openDetail(sn, auth) {
 
 async function loadSeriesList(q, auth) {
   const container = document.getElementById("seriesCheckList");
-  container.innerHTML = "チェック中...";
+  container.innerHTML = "検索中...";
   const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=intitle:${encodeURIComponent(q)}+inauthor:${encodeURIComponent(auth)}&maxResults=40`);
   const data = await res.json();
   const books = await getAllBooks();
@@ -340,9 +347,9 @@ async function loadSeriesList(q, auth) {
     container.innerHTML = uniqueApi.map(x => {
       const b = formatBookData(x);
       const owned = books.some(ob => cleanSpace(ob.title) === cleanSpace(b.title));
-      return `<div class="list-item"><img src="${b.image}"><div class="list-info"><span class="list-title">${b.title}</span></div><button class="add-btn" style="background:${owned?'#ccc':'var(--main)'};color:white;border:none;padding:8px;border-radius:5px;font-size:10px;" onclick='quickAdd(${JSON.stringify(b).replace(/'/g, "&apos;")})'>${owned?'済':'追加'}</button></div>`;
+      return `<div class="list-item"><img src="${b.image}"><div class="list-info"><span class="list-title">${b.title}</span></div><button class="add-btn" style="background:${owned?'#ccc':'var(--main)'};color:white;border:none;padding:8px 12px;border-radius:5px;font-size:10px;" onclick='quickAdd(${JSON.stringify(b).replace(/'/g, "&apos;")}, this)'>${owned?'済':'追加'}</button></div>`;
     }).join("");
-  } else { container.innerHTML = "情報なし"; }
+  } else { container.innerHTML = "見つかりませんでした。"; }
 }
 
 async function renderAuthors() {
@@ -362,11 +369,11 @@ async function openAuthorArchive(name) {
   const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=inauthor:${encodeURIComponent(name)}&maxResults=40`);
   const data = await res.json();
   const unowned = (data.items || []).filter(x => !books.some(ob => cleanSpace(ob.title) === cleanSpace(x.volumeInfo.title)));
-  document.getElementById("unownedList").innerHTML = `<div class="author-divider">未登録作品</div>` + unowned.map(x => { const b = formatBookData(x); return `<div class="list-item"><img src="${b.image}"><div class="list-info"><span class="list-title">${b.title}</span></div><button class="add-btn" style="background:var(--main);color:white;border:none;padding:8px;border-radius:5px;" onclick='quickAdd(${JSON.stringify(b).replace(/'/g, "&apos;")})'>追加</button></div>`; }).join("");
+  document.getElementById("unownedList").innerHTML = `<div class="author-divider">未所有と思われる作品</div>` + unowned.map(x => { const b = formatBookData(x); return `<div class="list-item"><img src="${b.image}"><div class="list-info"><span class="list-title">${b.title}</span></div><button class="add-btn" style="background:var(--main);color:white;border:none;padding:8px 12px;border-radius:5px;" onclick='quickAdd(${JSON.stringify(b).replace(/'/g, "&apos;")}, this)'>追加</button></div>`; }).join("");
 }
 
 async function renderNewBooks() {
-  const container = document.getElementById("newList"); container.innerHTML = '読み込み中...';
+  const container = document.getElementById("newList"); container.innerHTML = '新刊情報を取得中...';
   const books = await getAllBooks(); const authors = [...new Set(books.map(b => cleanSpace(b.author)))].slice(0, 30);
   const today = new Date(); const past = new Date(); past.setMonth(today.getMonth()-1); const future = new Date(); future.setMonth(today.getMonth()+3);
   let found = [];
@@ -381,7 +388,7 @@ async function renderNewBooks() {
     } catch(e){}
   }
   found.sort((a,b) => b.date.localeCompare(a.date));
-  container.innerHTML = found.length ? found.map(b => `<div class="list-item"><img src="${b.image}"><div class="list-info"><span class="list-title"><span style="background:#ff4081;color:#fff;padding:2px 5px;border-radius:4px;font-size:10px;margin-right:5px;">${b.date}</span>${b.title}</span><span class="list-author-sub">${b.author}</span></div><button class="add-btn" style="background:var(--accent);color:white;border:none;padding:8px;border-radius:5px;" onclick='quickAdd(${JSON.stringify(b).replace(/'/g, "&apos;")})'>追加</button></div>`).join("") : "ありません";
+  container.innerHTML = found.length ? found.map(b => `<div class="list-item"><img src="${b.image}"><div class="list-info"><span class="list-title"><span style="background:#ff4081;color:#fff;padding:2px 5px;border-radius:4px;font-size:10px;margin-right:5px;">${b.date}</span>${b.title}</span><span class="list-author-sub">${b.author}</span></div><button class="add-btn" style="background:var(--accent);color:white;border:none;padding:8px 12px;border-radius:5px;" onclick='quickAdd(${JSON.stringify(b).replace(/'/g, "&apos;")}, this)'>追加</button></div>`).join("") : "直近の新刊情報はありません";
 }
 
 function showPage(p, btn) { 
@@ -399,7 +406,8 @@ function toggleView() { viewMode = (viewMode === 'list' ? 'grid' : 'list'); rend
 function closeSubPage() { document.querySelectorAll(".sub-page").forEach(s => s.style.display = "none"); document.getElementById("mainUI").style.display = "block"; }
 function closeModal() { document.getElementById("modal").style.display = "none"; }
 async function refreshCount() { const books = await getAllBooks(); document.getElementById("totalCount").innerText = books.length + "冊"; }
-async function deleteBook(id) { if(confirm("消しますか？")){ const tx = db.transaction("books", "readwrite"); tx.objectStore("books").delete(id); tx.oncomplete = () => { closeModal(); renderShelf(); closeSubPage(); refreshCount(); }; } }
+async function deleteBook(id) { if(confirm("削除しますか？")){ const tx = db.transaction("books", "readwrite"); tx.objectStore("books").delete(id); tx.oncomplete = () => { closeModal(); renderShelf(); closeSubPage(); refreshCount(); }; } }
+
 </script>
 </body>
 </html>
