@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<title>蔵書BL Pro 履歴＆画像選択復活版</title>
+<title>蔵書BL Pro 読みカナ＆スキャン履歴版</title>
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover">
@@ -33,10 +33,12 @@
   .modal-content { background:#fff; padding:20px; border-radius:15px; width:90%; max-width:400px; max-height: 85vh; overflow-y: auto; }
   .toast { position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.8); color: white; padding: 10px 20px; border-radius: 25px; font-size: 13px; z-index: 2000; display: none; }
   .img-preview { width: 80px; height: 110px; object-fit: cover; border-radius: 4px; display: block; margin: 0 auto 10px; border: 1px solid #ddd; background: #f9f9f9; }
-  .recent-scan-box { margin-top: 20px; border-top: 2px solid var(--main); padding-top: 10px; }
-  .recent-title { font-size: 12px; font-weight: bold; color: var(--accent); margin-bottom: 8px; }
+  .recent-scan-box { margin-top: 15px; padding-top: 10px; border-top: 2px solid var(--main); }
+  .recent-title { font-size: 13px; font-weight: bold; color: var(--accent); margin-bottom: 8px; display: flex; align-items: center; gap: 5px; }
+  .scan-success-badge { background: #4caf50; color: white; font-size: 10px; padding: 2px 6px; border-radius: 4px; }
+  /* 本棚グリッド設定 */
   .flat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(95px, 1fr)); gap: 10px; }
-  .book-card { flex: 0 0 95px; position: relative; background: #333; border-radius: 6px; overflow: hidden; aspect-ratio: 3/4.2; }
+  .book-card { position: relative; background: #333; border-radius: 6px; overflow: hidden; aspect-ratio: 3/4.2; }
   .card-title { position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.6); color: white; padding: 4px 2px; font-size: 9px; text-align: center; }
   .badge { position: absolute; top: 4px; right: 4px; background: #f44336; color: white; font-size: 9px; border-radius: 10px; padding: 1px 5px; }
   .horizontal-scroll { display: flex; overflow-x: auto; gap: 8px; padding: 5px 0 15px; }
@@ -67,14 +69,16 @@
       <button class="tool-btn" onclick="openManualAdd()">✍️ 手動登録</button>
     </div>
     <div style="display:flex; gap:5px;">
-      <input id="q" type="search" placeholder="タイトル等で検索..." onkeypress="if(event.key==='Enter') searchAPI()">
+      <input id="q" type="search" placeholder="タイトルやISBNで検索..." onkeypress="if(event.key==='Enter') searchAPI()">
       <button onclick="searchAPI()" style="width:70px; height:43px; background:var(--accent); color:white; border:none; border-radius:8px; flex-shrink:0;">検索</button>
     </div>
-    <div id="searchResult"></div>
+    
     <div class="recent-scan-box" id="recentBox" style="display:none;">
-      <div class="recent-title">最近登録した本</div>
+      <div class="recent-title">✨ 今登録した本 / 履歴</div>
       <div id="recentList"></div>
     </div>
+
+    <div id="searchResult" style="margin-top:15px;"></div>
   </div>
 
   <div id="shelf" class="page"><input id="shelfSearch" type="search" placeholder="本棚から検索..." oninput="renderShelf()"><div id="shelfSummary"></div></div>
@@ -103,7 +107,7 @@ const collator = new Intl.Collator('ja', { numeric: true, sensitivity: 'base' })
 
 const request = indexedDB.open("BookShelfDB", 1);
 request.onupgradeneeded = (e) => { e.target.result.createObjectStore("books", {keyPath: "id"}); };
-request.onsuccess = (e) => { db = e.target.result; refreshCount(); renderShelf(); };
+request.onsuccess = (e) => { db = e.target.result; refreshCount(); renderShelf(); updateRecentList(); };
 
 const cleanSpace = (str) => (str || "").replace(/[\s　]+/g, "");
 const getSeries = (t) => t.replace(/(【.*?】|\[.*?\]|（.*?）|\(.*?\)|：.*$|:.*$| - .*$|　.*$|\s.*$|分冊版|ばら売り|コミック|\d+巻|vol\.\d+|第\d+)/gi, "").trim();
@@ -130,9 +134,16 @@ function formatBookData(item) {
 
 async function quickAdd(b, btn) {
   const books = await getAllBooks();
-  if (books.some(x => cleanSpace(x.title) === cleanSpace(b.title))) { showToast("登録済です"); return; }
+  if (books.some(x => cleanSpace(x.title) === cleanSpace(b.title))) { 
+    showToast("登録済です"); 
+    return; 
+  }
   b.id = "id" + Date.now() + Math.random();
   b.regDate = Date.now();
+  // 読みの初期値
+  if(!b.kanaTitle) b.kanaTitle = b.title;
+  if(!b.kanaAuthor) b.kanaAuthor = b.author;
+
   const tx = db.transaction("books", "readwrite");
   tx.objectStore("books").put(b);
   tx.oncomplete = () => { 
@@ -151,11 +162,18 @@ async function updateRecentList() {
   const list = document.getElementById("recentList");
   if(recent.length > 0) {
     box.style.display = "block";
-    list.innerHTML = recent.map(b => `<div class="list-item"><img src="${b.image}"><div class="list-info"><span class="list-title">${b.title}</span><span class="list-author-sub">${b.author}</span></div></div>`).join("");
+    list.innerHTML = recent.map(b => `
+      <div class="list-item" onclick="openEditModal('${b.id}')">
+        <img src="${b.image}">
+        <div class="list-info">
+          <span class="list-title">${b.title}</span>
+          <span class="list-author-sub">${b.author}</span>
+        </div>
+        <span class="scan-success-badge">登録済</span>
+      </div>`).join("");
   }
 }
 
-// 画像選択ハンドル
 function handleImgSelect(input) {
   if (input.files && input.files[0]) {
     const reader = new FileReader();
@@ -174,12 +192,14 @@ function openManualAdd() {
     <h3>手動登録</h3>
     <img id="modalPreview" class="img-preview" style="display:none;">
     <label style="display:block;text-align:center;background:#eee;padding:10px;border-radius:8px;margin-bottom:15px;font-size:13px;">
-      🖼 アルバムから画像を選択
+      🖼 画像を選択
       <input type="file" accept="image/*" style="display:none;" onchange="handleImgSelect(this)">
     </label>
-    <input id="mt" placeholder="タイトル">
+    <input id="mt" placeholder="作品タイトル">
+    <input id="mkTitle" placeholder="作品の読み（カナ）">
     <input id="ma" placeholder="作者名">
-    <button onclick="manualSave()" class="tool-btn" style="width:100%">登録</button>
+    <input id="mkAuthor" placeholder="作者の読み（カナ）">
+    <button onclick="manualSave()" class="tool-btn" style="width:100%">登録する</button>
     <button onclick="closeModal()" style="width:100%;margin-top:10px;border:none;background:none;">閉じる</button>`;
   document.getElementById("modal").style.display = "flex";
 }
@@ -187,9 +207,16 @@ function openManualAdd() {
 async function manualSave() {
   const t = document.getElementById("mt").value, a = document.getElementById("ma").value;
   if(t && a){
-    await quickAdd({title:t, author:cleanSpace(a), image:currentImgData, date:"手動登録"});
+    await quickAdd({
+      title: t, 
+      kanaTitle: document.getElementById("mkTitle").value || t,
+      author: cleanSpace(a), 
+      kanaAuthor: document.getElementById("mkAuthor").value || a,
+      image: currentImgData, 
+      date: "手動登録"
+    });
     closeModal();
-  } else { alert("タイトルと作者を入力してください"); }
+  } else { alert("タイトルと作者は必須です"); }
 }
 
 async function openEditModal(id) {
@@ -197,19 +224,25 @@ async function openEditModal(id) {
   const b = books.find(x => x.id === id);
   currentImgData = b.image || "";
   document.getElementById("modalBody").innerHTML = `
-    <h3>編集</h3>
+    <h3>作品編集</h3>
     <img id="modalPreview" src="${currentImgData}" class="img-preview" ${!currentImgData?'style="display:none"':''}>
     <label style="display:block;text-align:center;background:#eee;padding:10px;border-radius:8px;margin-bottom:15px;font-size:13px;">
-      🖼 画像を変更する
+      🖼 画像を変更
       <input type="file" accept="image/*" style="display:none;" onchange="handleImgSelect(this)">
     </label>
-    <input id="et" value="${b.title}" placeholder="タイトル">
-    <input id="ea" value="${b.author}" placeholder="作者名">
+    <div style="font-size:11px;color:var(--accent);margin-bottom:3px;">作品名</div>
+    <input id="et" value="${b.title}">
+    <div style="font-size:11px;color:var(--accent);margin-bottom:3px;">作品名の読み（並び替え用）</div>
+    <input id="ekTitle" value="${b.kanaTitle || ''}">
+    <div style="font-size:11px;color:var(--accent);margin-bottom:3px;">作者名</div>
+    <input id="ea" value="${b.author}">
+    <div style="font-size:11px;color:var(--accent);margin-bottom:3px;">作者名の読み（並び替え用）</div>
+    <input id="ekAuthor" value="${b.kanaAuthor || ''}">
     <div style="display:flex;gap:10px;">
-      <button onclick="deleteBook('${id}')" style="flex:1;background:#e57373;color:white;border:none;padding:10px;border-radius:5px;">削除</button>
-      <button onclick="updateBook('${id}')" style="flex:1;background:var(--main);color:white;border:none;padding:10px;border-radius:5px;">保存</button>
+      <button onclick="deleteBook('${id}')" style="flex:1;background:#e57373;color:white;border:none;padding:12px;border-radius:5px;">削除</button>
+      <button onclick="updateBook('${id}')" style="flex:1;background:var(--main);color:white;border:none;padding:12px;border-radius:5px;">保存</button>
     </div>
-    <button onclick="closeModal()" style="width:100%;margin-top:10px;border:none;background:none;">キャンセル</button>`;
+    <button onclick="closeModal()" style="width:100%;margin-top:15px;border:none;background:none;">閉じる</button>`;
   document.getElementById("modal").style.display = "flex";
 }
 
@@ -217,14 +250,20 @@ async function updateBook(id) {
   const all = await getAllBooks();
   const b = all.find(x => x.id === id);
   b.title = document.getElementById("et").value;
+  b.kanaTitle = document.getElementById("ekTitle").value;
   b.author = cleanSpace(document.getElementById("ea").value);
+  b.kanaAuthor = document.getElementById("ekAuthor").value;
   b.image = currentImgData;
   const tx = db.transaction("books", "readwrite");
   tx.objectStore("books").put(b);
-  tx.oncomplete = () => { closeModal(); renderShelf(); showToast("更新しました"); };
+  tx.oncomplete = () => { 
+    closeModal(); 
+    renderShelf(); 
+    updateRecentList();
+    showToast("更新しました"); 
+  };
 }
 
-// 既存の基本機能
 async function searchAPI() {
   let q = document.getElementById("q").value; if(!q) return;
   document.getElementById("searchResult").innerHTML = "検索中...";
@@ -246,14 +285,18 @@ function toggleScanner() {
   Quagga.onDetected(async (res) => {
     const code = res.codeResult.code;
     if ((code.startsWith("978") || code.startsWith("979")) && code !== lastScan) {
-      lastScan = code; const response = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${code}`);
-      const data = await response.json(); if(data.items) await quickAdd(formatBookData(data.items[0]));
+      lastScan = code; 
+      const response = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${code}`);
+      const data = await response.json(); 
+      if(data.items) {
+        const book = formatBookData(data.items[0]);
+        await quickAdd(book);
+      }
       setTimeout(() => { lastScan = ""; }, 2000);
     }
   });
 }
 
-// --- 本棚・作者・新刊などの描画系（前回と同じ） ---
 function renderShelf() {
   getAllBooks().then(books => {
     const container = document.getElementById("shelfSummary");
@@ -287,11 +330,13 @@ function renderShelf() {
     container.innerHTML = html;
   });
 }
+
 function renderItem(sn, data) {
   const auth = cleanSpace(data.info.author);
   if (viewMode === 'grid') return `<div class="book-card" onclick="openDetail('${sn.replace(/'/g, "\\'")}', '${auth.replace(/'/g, "\\'")}')"><img src="${data.info.image || ''}">${data.count > 1 ? `<div class="badge">${data.count}</div>` : ''}<div class="card-title">${sn}</div></div>`;
   return `<div class="list-item" onclick="openDetail('${sn.replace(/'/g, "\\'")}', '${auth.replace(/'/g, "\\'")}')"><img src="${data.info.image || ''}"><div class="list-info"><span class="list-title">${sn}</span><span class="list-author-sub">${auth}</span></div><div style="color:var(--main);font-weight:bold">${data.count}</div></div>`;
 }
+
 async function openDetail(sn, auth) {
   document.getElementById("mainUI").style.display = "none";
   document.getElementById("detailPage").style.display = "block";
@@ -302,6 +347,7 @@ async function openDetail(sn, auth) {
   document.getElementById("detailList").innerHTML = items.map(b => `<div class="list-item" onclick="openEditModal('${b.id}')"><img src="${b.image}"><div class="list-info"><span class="list-title">${b.title}</span></div></div>`).join("");
   loadSeriesList(sn, auth);
 }
+
 async function loadSeriesList(q, auth) {
   const container = document.getElementById("seriesCheckList");
   container.innerHTML = "全巻を確認中...";
@@ -316,7 +362,7 @@ async function loadSeriesList(q, auth) {
       const owned = books.some(ob => cleanSpace(ob.title) === cleanSpace(b.title));
       return `<div class="list-item"><img src="${b.image}"><div class="list-info"><span class="list-title">${b.title}</span></div><button class="add-btn" style="background:${owned?'#ccc':'var(--main)'};color:white;border:none;padding:8px;border-radius:5px;font-size:10px;" onclick='quickAdd(${JSON.stringify(b).replace(/'/g, "&apos;")}, this)'>${owned?'済':'追加'}</button></div>`;
     }).join("");
-  } else { container.innerHTML = "データが見つかりませんでした。"; }
+  } else { container.innerHTML = "見つかりませんでした。"; }
 }
 
 async function renderAuthors() {
@@ -340,7 +386,7 @@ async function openAuthorArchive(name) {
 }
 
 async function renderNewBooks() {
-  const container = document.getElementById("newList"); container.innerHTML = '検索中...';
+  const container = document.getElementById("newList"); container.innerHTML = '新刊をチェック中...';
   const books = await getAllBooks(); const authors = [...new Set(books.map(b => cleanSpace(b.author)))].slice(0, 30);
   const today = new Date(); const past = new Date(); past.setMonth(today.getMonth()-1); const future = new Date(); future.setMonth(today.getMonth()+3);
   let found = [];
@@ -355,7 +401,7 @@ async function renderNewBooks() {
     } catch(e){}
   }
   found.sort((a,b) => b.date.localeCompare(a.date));
-  container.innerHTML = found.length ? found.map(b => `<div class="list-item"><img src="${b.image}"><div class="list-info"><span class="list-title"><span class="new-release-tag" style="background:#ff4081;color:#fff;padding:2px 5px;border-radius:4px;font-size:10px;margin-right:5px;">${b.date}</span>${b.title}</span><span class="list-author-sub">${b.author}</span></div><button class="add-btn" style="background:var(--accent);color:white;border:none;padding:8px;border-radius:5px;" onclick='quickAdd(${JSON.stringify(b).replace(/'/g, "&apos;")}, this)'>追加</button></div>`).join("") : "直近の新刊はありません";
+  container.innerHTML = found.length ? found.map(b => `<div class="list-item"><img src="${b.image}"><div class="list-info"><span class="list-title"><span style="background:#ff4081;color:#fff;padding:2px 5px;border-radius:4px;font-size:10px;margin-right:5px;">${b.date}</span>${b.title}</span><span class="list-author-sub">${b.author}</span></div><button class="add-btn" style="background:var(--accent);color:white;border:none;padding:8px;border-radius:5px;" onclick='quickAdd(${JSON.stringify(b).replace(/'/g, "&apos;")}, this)'>追加</button></div>`).join("") : "直近の新刊はありません";
 }
 
 function showPage(p, btn) { 
@@ -374,10 +420,8 @@ function toggleView() { viewMode = (viewMode === 'list' ? 'grid' : 'list'); rend
 function closeSubPage() { document.querySelectorAll(".sub-page").forEach(s => s.style.display = "none"); document.getElementById("mainUI").style.display = "block"; }
 function closeModal() { document.getElementById("modal").style.display = "none"; }
 async function refreshCount() { const books = await getAllBooks(); document.getElementById("totalCount").innerText = books.length + "冊"; }
-async function deleteBook(id) { if(confirm("削除しますか？")){ const tx = db.transaction("books", "readwrite"); tx.objectStore("books").delete(id); tx.oncomplete = () => { closeModal(); renderShelf(); closeSubPage(); refreshCount(); }; } }
+async function deleteBook(id) { if(confirm("この巻を削除しますか？")){ const tx = db.transaction("books", "readwrite"); tx.objectStore("books").delete(id); tx.oncomplete = () => { closeModal(); renderShelf(); closeSubPage(); refreshCount(); updateRecentList(); }; } }
 
-// 初期表示で履歴を更新
-setTimeout(updateRecentList, 500);
 </script>
 </body>
 </html>
